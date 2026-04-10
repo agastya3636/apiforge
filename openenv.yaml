@@ -1,0 +1,156 @@
+name: api-debugging-environment
+version: "2.0.0"
+description: >
+  An OpenEnv-compatible RL environment where an AI agent acts as a backend engineer
+  diagnosing and resolving real-world API failures. Seven tasks across three difficulty
+  levels expose the agent to timeout errors, auth failures, rate limiting, DB pool
+  exhaustion, SSL expiry, deployment bugs, and cascading microservice failures.
+
+entrypoint: env/environment.py
+environment_class: APIDebugEnv
+
+tasks:
+  # ── Easy ─────────────────────────────────────────────────────────────────
+  - name: timeout_debug
+    difficulty: easy
+    description: >
+      API endpoint returning 504 Gateway Timeout.
+      The agent must increase the timeout or attempt a retry.
+    max_steps: 5
+    reward:
+      increase_timeout: 1.0
+      retry_request: 0.5
+      other: 0.0
+
+  # ── Medium ────────────────────────────────────────────────────────────────
+  - name: auth_failure
+    difficulty: medium
+    description: >
+      API returns 401 Unauthorized due to a stale auth token after secret rotation.
+    max_steps: 6
+    reward:
+      check_logs_then_fix: 1.0
+      fix_without_check: 0.6
+      check_logs_only: 0.3
+
+  - name: rate_limit_429
+    difficulty: medium
+    description: >
+      API returns 429 Too Many Requests. Client is bursting without backoff.
+    max_steps: 6
+    reward:
+      check_logs_then_backoff: 1.0
+      backoff_without_check: 0.6
+      check_logs_only: 0.3
+
+  - name: db_timeout
+    difficulty: medium
+    description: >
+      API returns 500 due to exhausted DB connection pool from a long-running query.
+    max_steps: 6
+    reward:
+      check_logs_then_restart: 1.0
+      restart_without_check: 0.5
+      check_logs_only: 0.4
+
+  - name: ssl_cert_expiry
+    difficulty: medium
+    description: >
+      API returns 503 due to an expired TLS certificate.
+    max_steps: 6
+    reward:
+      check_logs_then_renew: 1.0
+      renew_without_check: 0.6
+      check_logs_only: 0.3
+
+  # ── Hard ──────────────────────────────────────────────────────────────────
+  - name: deployment_500
+    difficulty: hard
+    description: >
+      Deployment v2.4.2 introduced a breaking schema change causing 100% 500 errors.
+    max_steps: 8
+    reward:
+      step_1_check_logs: 0.3
+      step_2_analyze_deployment: 0.3
+      step_3_rollback_version: 0.4
+
+  - name: cascading_failure
+    difficulty: hard
+    description: >
+      stock-svc v1.2.3 crashes on startup (missing env var), cascading 503 across
+      inventory-svc and api-gateway. Agent must trace the cascade and rollback.
+    max_steps: 9
+    reward:
+      step_1_check_logs: 0.3
+      step_2_analyze_deployment: 0.3
+      step_3_rollback_version: 0.4
+
+action_space:
+  type: discrete
+  description: String-based commands the agent can issue to the environment.
+  actions:
+    - check_logs
+    - retry_request
+    - fix_auth_token
+    - increase_timeout
+    - restart_service
+    - rollback_version
+    - analyze_deployment
+    - implement_backoff
+    - renew_certificate
+    - do_nothing
+
+observation_space:
+  type: structured_json
+  fields:
+    logs:
+      type: string
+      description: Timestamped application log output
+    status_code:
+      type: integer
+      description: HTTP status code of the failing request
+    latency_ms:
+      type: integer
+      description: Response latency in milliseconds
+    error:
+      type: string
+      description: Error class name (e.g. TimeoutError, AuthenticationError)
+    hints:
+      type: array
+      items: string
+      description: Contextual hints revealed through investigation actions
+
+reward:
+  range: [0.0, 1.0]
+  type: stepwise
+  penalties:
+    step_penalty: configurable (default 0.0)
+    destructive_penalty: configurable (default 0.0)
+  description: >
+    Rewards are assigned per step and accumulated within an episode.
+    Optional penalties are deducted for wasted steps and misapplied destructive actions.
+
+advanced_features:
+  noise_injection:
+    description: >
+      Configurable observation noise (0.0–1.0) injects red-herring logs,
+      misleading hints, and latency jitter to increase task difficulty.
+  curriculum_learning:
+    description: >
+      CurriculumManager tracks rolling average scores per task and automatically
+      unlocks harder tasks when the agent masters easier ones.
+  reward_shaping:
+    description: >
+      Step penalty and destructive-action penalty are configurable to shape
+      the agent's exploration behaviour.
+  gradio_dashboard:
+    entrypoint: dashboard.py
+    description: >
+      Interactive web UI with live observation display, one-click action buttons,
+      step-reward bar chart, and cumulative score tracking.
+
+runtime:
+  max_vcpu: 2
+  max_ram_gb: 8
+  max_runtime_minutes: 20
+  python_version: "3.10"
